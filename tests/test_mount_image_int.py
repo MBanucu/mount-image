@@ -7,7 +7,6 @@ a pre-built sparse FAT image (tests/fat.img.gz) otherwise.
 import gzip
 import os
 import platform
-import shutil
 import subprocess
 import tempfile
 import unittest
@@ -21,27 +20,6 @@ _SYSTEM = platform.system()
 def _sudo_available() -> bool:
     r = subprocess.run(['sudo', '-n', 'true'], capture_output=True)
     return r.returncode == 0
-
-
-def _device_attached(device: str, img_path: str) -> bool:
-    """Check if *device* is still attached and pointing to *img_path*."""
-    if _SYSTEM == 'Darwin':
-        r = subprocess.run(
-            ['hdiutil', 'info', '-plist'], capture_output=True, text=True)
-        import plistlib
-        try:
-            info = plistlib.loads(r.stdout.encode())
-        except Exception:
-            return False
-        for img in info.get('images', []):
-            for ent in img.get('system-entities', []):
-                if ent.get('dev-entry') == device:
-                    return True
-        return False
-    else:
-        r = subprocess.run(['sudo', 'losetup', device],
-                           capture_output=True, text=True)
-        return r.returncode == 0 and img_path in r.stdout
 
 
 def _mkfs_available() -> bool:
@@ -128,18 +106,19 @@ class TestMountImageIntegration(unittest.TestCase):
 
     def test_attach_and_detach_raw(self):
         from mount_image import attach_image, detach_image
+        from mount_resolve import device_backing_file
 
         device = attach_image(self._img)
         try:
             self.assertTrue(os.path.exists(device))
             self.assertTrue(device.startswith('/dev/'))
-            self.assertTrue(_device_attached(device, self._img),
-                            f'{device} should be attached')
+            self.assertEqual(device_backing_file(device), self._img)
         finally:
             detach_image(device)
 
-        self.assertFalse(_device_attached(device, self._img),
-                         f'{device} should be detached')
+        backing = device_backing_file(device)
+        self.assertNotEqual(backing, self._img,
+                            f'{device} still backed by {backing}')
 
     def test_mount_image_twice_different_mount_points(self):
         if _SYSTEM == 'Darwin':

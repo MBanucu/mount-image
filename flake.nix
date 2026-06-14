@@ -4,19 +4,24 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    mount-resolve.url = "github:MBanucu/mount-resolve";
   };
 
   outputs =
     { self
     , nixpkgs
     , flake-utils
+    , mount-resolve
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
       let
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [ self.overlays.default ];
+          overlays = [
+            mount-resolve.overlays.default
+            self.overlays.default
+          ];
         };
       in
       {

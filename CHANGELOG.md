@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-14
+
+### Changed
+
+- Depend on `mount-resolve>=0.2.0` and use `device_backing_file()` in
+  integration tests instead of custom helper.
+
 ## [0.2.0] - 2026-06-14
 
 ### Added
@@ -40,7 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - macOS support via `hdiutil attach` + `mount`.
 - Nix flake with dev shell and package overlay.
 
-[unreleased]: https://github.com/MBanucu/mount-image/compare/v0.2.0...HEAD
+[unreleased]: https://github.com/MBanucu/mount-image/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/MBanucu/mount-image/releases/tag/v0.2.1
 [0.2.0]: https://github.com/MBanucu/mount-image/releases/tag/v0.2.0
 [0.1.2]: https://github.com/MBanucu/mount-image/releases/tag/v0.1.2
 [0.1.1]: https://github.com/MBanucu/mount-image/releases/tag/v0.1.1

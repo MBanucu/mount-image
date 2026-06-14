@@ -2,16 +2,18 @@
   lib
 , buildPythonPackage
 , setuptools
+, mount-resolve
 , src
 }:
 buildPythonPackage rec {
   pname = "mount-image";
-  version = "0.2.0";
+  version = "0.2.1";
   pyproject = true;
 
   inherit src;
 
   nativeBuildInputs = [ setuptools ];
+  propagatedBuildInputs = [ mount-resolve ];
 
   doCheck = false;
   pythonImportsCheck = [ "mount_image" ];
