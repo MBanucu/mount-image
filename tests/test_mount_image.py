@@ -14,80 +14,76 @@ class TestImports(unittest.TestCase):
 
 
 class TestLinuxMount(unittest.TestCase):
-    @patch('mount_image._mount_linux.subprocess.run')
-    @patch('mount_image._mount_linux.tempfile.mkdtemp')
-    def test_mount_image_success(self, mock_mkdtemp, mock_run):
-        mock_mkdtemp.return_value = '/tmp/mount_image_abc'
-        mock_run.side_effect = [
-            MagicMock(returncode=0, stdout='/dev/loop0\n'),
-            MagicMock(returncode=0, stdout=''),
-        ]
+    @classmethod
+    def setUpClass(cls):
+        import platform
+        if platform.system() != 'Linux':
+            raise unittest.SkipTest('Linux-only tests')
+
+    @patch('mount_image._mount_linux._sudo_mount')
+    def test_mount_image_success(self, mock_sudo_mount):
+        mock_sudo_mount.return_value = ('/dev/loop0', '/tmp/mount_image_abc')
         from mount_image._mount_linux import mount_image
         device, mount_point = mount_image('/tmp/test.img')
         self.assertEqual(device, '/dev/loop0')
         self.assertEqual(mount_point, '/tmp/mount_image_abc')
 
-    @patch('mount_image._mount_linux.subprocess.run')
-    @patch('mount_image._mount_linux.tempfile.mkdtemp')
-    def test_mount_image_losetup_fails(self, mock_mkdtemp, mock_run):
-        mock_mkdtemp.return_value = '/tmp/mount_image_abc'
-        mock_run.return_value = MagicMock(returncode=1, stderr='Permission denied')
+    @patch('mount_image._mount_linux._sudo_mount')
+    @patch('mount_image._mount_linux._udisks_mount')
+    @patch('mount_image._mount_linux._guestmount_mount')
+    def test_mount_image_all_strategies_fail(self, mock_guest, mock_udisks, mock_sudo):
+        mock_sudo.side_effect = RuntimeError('losetup failed: Permission denied')
+        mock_udisks.side_effect = RuntimeError('udisksctl loop-setup failed')
+        mock_guest.side_effect = RuntimeError('guestmount failed')
         from mount_image._mount_linux import mount_image
         with self.assertRaises(RuntimeError) as ctx:
             mount_image('/tmp/test.img')
-        self.assertIn('losetup failed', str(ctx.exception))
+        self.assertIn('All mount strategies failed', str(ctx.exception))
 
-    @patch('mount_image._mount_linux.subprocess.run')
-    @patch('mount_image._mount_linux.tempfile.mkdtemp')
-    def test_mount_image_mount_fails(self, mock_mkdtemp, mock_run):
-        mock_mkdtemp.return_value = '/tmp/mount_image_abc'
-        mock_run.side_effect = [
-            MagicMock(returncode=0, stdout='/dev/loop0\n'),
-            MagicMock(returncode=1, stderr='mount failed'),
-            MagicMock(returncode=0, stdout=''),
-        ]
+    @patch('mount_image._mount_linux._sudo_mount')
+    @patch('mount_image._mount_linux._udisks_mount')
+    def test_mount_image_fallback_to_udisks(self, mock_udisks, mock_sudo):
+        mock_sudo.side_effect = RuntimeError('losetup failed')
+        mock_udisks.return_value = ('/dev/loop0', '/media/user/NO NAME')
         from mount_image._mount_linux import mount_image
-        with self.assertRaises(RuntimeError) as ctx:
-            mount_image('/tmp/test.img')
-        self.assertIn('mount failed', str(ctx.exception))
+        device, mount_point = mount_image('/tmp/test.img')
+        self.assertEqual(device, '/dev/loop0')
+        self.assertEqual(mount_point, '/media/user/NO NAME')
 
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_umount_image(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0)
+    @patch('mount_image._mount_linux._teardown', {})
+    def test_umount_image_no_teardown_info(self):
         from mount_image._mount_linux import umount_image
         umount_image('/dev/loop0', '/tmp/mount_point')
 
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_attach_image_success(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout='/dev/loop0\n')
+    @patch('mount_image._mount_linux._sudo_attach')
+    def test_attach_image_success(self, mock_attach):
+        mock_attach.return_value = '/dev/loop0'
         from mount_image._mount_linux import attach_image
         device = attach_image('/tmp/test.img')
         self.assertEqual(device, '/dev/loop0')
 
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_attach_image_fails(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1, stderr='Permission denied')
+    @patch('mount_image._mount_linux._sudo_attach')
+    @patch('mount_image._mount_linux._udisks_attach')
+    def test_attach_image_all_fail(self, mock_udisks, mock_sudo):
+        mock_sudo.side_effect = RuntimeError('Permission denied')
+        mock_udisks.side_effect = RuntimeError('udisksctl failed')
         from mount_image._mount_linux import attach_image
         with self.assertRaises(RuntimeError):
             attach_image('/tmp/test.img')
 
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_detach_image(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0)
+    @patch('mount_image._mount_linux._teardown', {})
+    def test_detach_image_no_teardown_info(self):
         from mount_image._mount_linux import detach_image
         detach_image('/dev/loop0')
 
-    @patch('mount_image._mount_linux.subprocess.run')
-    @patch('mount_image._mount_linux.tempfile.mkdtemp')
-    def test_mount_image_custom_fstype_and_options(self, mock_mkdtemp, mock_run):
-        mock_mkdtemp.return_value = '/tmp/mount_image_abc'
-        mock_run.side_effect = [
-            MagicMock(returncode=0, stdout='/dev/loop0\n'),
-            MagicMock(returncode=0, stdout=''),
-        ]
+    @patch('mount_image._mount_linux._sudo_mount')
+    def test_mount_image_custom_fstype_and_options(self, mock_sudo_mount):
+        mock_sudo_mount.return_value = ('/dev/loop0', '/tmp/mount_image_abc')
         from mount_image._mount_linux import mount_image
         device, mount_point = mount_image(
             '/tmp/test.img', fstype='ext4', options=['ro', 'noexec'])
+        mock_sudo_mount.assert_called_once_with(
+            '/tmp/test.img', 'ext4', ['ro', 'noexec'])
         self.assertEqual(device, '/dev/loop0')
         self.assertEqual(mount_point, '/tmp/mount_image_abc')
 
