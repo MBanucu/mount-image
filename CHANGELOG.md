@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-14
+
+### Changed
+
+- Break out mount strategies into separate PyPI packages:
+  `mount-image-sudo`, `mount-image-udisks`, `mount-image-guestmount`,
+  `mount-image-hdiutil`. mount-image becomes the orchestrator, importing
+  and chaining strategies without duplicating code.
+
+### Removed
+
+- `mount_image._mount_darwin` module (moved to `mount-image-hdiutil`).
+- Direct runtime dependency on `mount-resolve`.
+
 ## [0.3.0] - 2026-06-14
 
 ### Added
@@ -67,7 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - macOS support via `hdiutil attach` + `mount`.
 - Nix flake with dev shell and package overlay.
 
-[unreleased]: https://github.com/MBanucu/mount-image/compare/v0.3.0...HEAD
+[unreleased]: https://github.com/MBanucu/mount-image/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/MBanucu/mount-image/releases/tag/v0.4.0
 [0.3.0]: https://github.com/MBanucu/mount-image/releases/tag/v0.3.0
 [0.2.1]: https://github.com/MBanucu/mount-image/releases/tag/v0.2.1
 [0.2.0]: https://github.com/MBanucu/mount-image/releases/tag/v0.2.0
