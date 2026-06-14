@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-14
+
+### Added
+
+- Mount strategy chain: `mount_image()` now automatically tries sudo
+  losetup, udisksctl, and guestmount in order, selecting the first
+  available tool. `umount_image()` and `detach_image()` use the
+  matching strategy automatically.
+
+### Changed
+
+- Add CI, Codecov, and PyPI download badges to README.
+
+### Fixed
+
+- udisksctl failures now raise `RuntimeError` instead of being
+  silently ignored.
+- Fallback teardown commands are now wrapped in try/except to prevent
+  cascading errors during cleanup.
+
 ## [0.2.1] - 2026-06-14
 
 ### Changed
@@ -47,7 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - macOS support via `hdiutil attach` + `mount`.
 - Nix flake with dev shell and package overlay.
 
-[unreleased]: https://github.com/MBanucu/mount-image/compare/v0.2.1...HEAD
+[unreleased]: https://github.com/MBanucu/mount-image/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/MBanucu/mount-image/releases/tag/v0.3.0
 [0.2.1]: https://github.com/MBanucu/mount-image/releases/tag/v0.2.1
 [0.2.0]: https://github.com/MBanucu/mount-image/releases/tag/v0.2.0
 [0.1.2]: https://github.com/MBanucu/mount-image/releases/tag/v0.1.2
