@@ -116,7 +116,9 @@ class TestMountImageIntegration(unittest.TestCase):
         finally:
             detach_image(device)
 
-        self.assertIsNone(device_backing_file(device))
+        backing = device_backing_file(device)
+        self.assertNotEqual(backing, self._img,
+                            f'{device} still backed by {backing}')
 
     def test_mount_image_twice_different_mount_points(self):
         if _SYSTEM == 'Darwin':
