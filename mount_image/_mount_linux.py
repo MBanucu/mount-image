@@ -231,9 +231,15 @@ def umount_image(device: str, mount_point: str | None = None):
         except Exception:
             pass
     elif mp:
-        subprocess.run(['sudo', 'umount', mp], capture_output=True)
-        subprocess.run(['fusermount', '-u', mp],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            subprocess.run(['sudo', 'umount', mp], capture_output=True)
+        except Exception:
+            pass
+        try:
+            subprocess.run(['fusermount', '-u', mp],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
 
     if mp:
         time.sleep(0.3)
@@ -288,4 +294,8 @@ def detach_image(device: str):
             ['sudo', 'losetup', '-d', device],
             ['udisksctl', 'loop-delete', '-b', device, '--no-user-interaction'],
         ):
-            subprocess.run(cmd, stderr=subprocess.DEVNULL)
+            try:
+                subprocess.run(cmd, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
