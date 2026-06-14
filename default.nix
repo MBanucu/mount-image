@@ -5,12 +5,14 @@
 , mount-image-sudo
 , mount-image-udisks
 , mount-image-guestmount
+, mount-image-sshfs
+, mount-image-rclone
 , mount-image-hdiutil
 , src
 }:
 buildPythonPackage rec {
   pname = "mount-image";
-  version = "0.3.0";
+  version = "0.4.0";
   pyproject = true;
 
   inherit src;
@@ -20,6 +22,8 @@ buildPythonPackage rec {
     mount-image-sudo
     mount-image-udisks
     mount-image-guestmount
+    mount-image-sshfs
+    mount-image-rclone
     mount-image-hdiutil
   ];
 

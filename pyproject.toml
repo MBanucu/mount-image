@@ -13,6 +13,8 @@ dependencies = [
     "mount-image-sudo>=0.1.0",
     "mount-image-udisks>=0.1.0",
     "mount-image-guestmount>=0.1.0",
+    "mount-image-sshfs>=0.1.0",
+    "mount-image-rclone>=0.1.0",
     "mount-image-hdiutil>=0.1.0; sys_platform == 'darwin'",
 ]
 authors = [{ name = "Michael Banucu", email = "michael.banucu@googlemail.com" }]

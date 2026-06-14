@@ -1,4 +1,4 @@
-"""Linux disk image mounting — strategy chain (sudo → udisksctl → guestmount)."""
+"""Linux disk image mounting — strategy chain (sudo → udisksctl → guestmount → sshfs → rclone)."""
 
 import os
 import shutil
@@ -24,8 +24,19 @@ from mount_image_guestmount import (
     detach_inner as _guestmount_detach,
 )
 from mount_image_sudo import attach_image as _guestmount_attach
+from mount_image_sshfs import (
+    mount_image as _sshfs_mount,
+    umount_inner as _sshfs_umount_inner,
+    detach_inner as _sshfs_detach,
+)
+from mount_image_rclone import (
+    mount_image as _rclone_mount,
+    umount_inner as _rclone_umount_inner,
+    detach_inner as _rclone_detach,
+)
 
-_STRATEGY_NAMES = ['sudo', 'udisksctl', 'guestmount']
+_STRATEGY_NAMES = ['sudo', 'udisksctl', 'guestmount', 'sshfs', 'rclone']
+_FUSE_STRATEGIES = {'guestmount', 'sshfs', 'rclone'}
 _teardown: dict[str, tuple[Callable, Callable, str | None]] = {}
 
 
@@ -37,6 +48,10 @@ def _get_strategy_fns():
          _udisks_umount_inner, _udisks_detach),
         (_STRATEGY_NAMES[2], _guestmount_mount, _guestmount_attach,
          _guestmount_umount_inner, _guestmount_detach),
+        (_STRATEGY_NAMES[3], _sshfs_mount, None,
+         _sshfs_umount_inner, _sshfs_detach),
+        (_STRATEGY_NAMES[4], _rclone_mount, None,
+         _rclone_umount_inner, _rclone_detach),
     ]
 
 
@@ -111,7 +126,7 @@ def attach_image(image_path: str) -> str:
     """
     errors = []
     for label, _mount_fn, attach_fn, _umount_fn, detach_fn in _get_strategy_fns():
-        if label == 'guestmount':
+        if label in _FUSE_STRATEGIES or attach_fn is None:
             continue
         try:
             device = attach_fn(image_path)
