@@ -7,6 +7,8 @@
     mount-image-sudo.url = "github:MBanucu/mount-image-sudo";
     mount-image-udisks.url = "github:MBanucu/mount-image-udisks";
     mount-image-guestmount.url = "github:MBanucu/mount-image-guestmount";
+    mount-image-sshfs.url = "github:MBanucu/mount-image-sshfs";
+    mount-image-rclone.url = "github:MBanucu/mount-image-rclone";
     mount-image-hdiutil.url = "github:MBanucu/mount-image-hdiutil";
   };
 
@@ -17,6 +19,8 @@
     , mount-image-sudo
     , mount-image-udisks
     , mount-image-guestmount
+    , mount-image-sshfs
+    , mount-image-rclone
     , mount-image-hdiutil
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -28,6 +32,8 @@
             mount-image-sudo.overlays.default
             mount-image-udisks.overlays.default
             mount-image-guestmount.overlays.default
+            mount-image-sshfs.overlays.default
+            mount-image-rclone.overlays.default
             mount-image-hdiutil.overlays.default
             self.overlays.default
           ];
