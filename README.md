@@ -5,6 +5,13 @@
 [![License](https://img.shields.io/github/license/MBanucu/mount-image)](LICENSE)
 [![OS](https://img.shields.io/badge/OS-Linux%20%7C%20macOS-blue)](https://github.com/MBanucu/mount-image)
 
+[![CI](https://img.shields.io/github/actions/workflow/status/MBanucu/mount-image/test.yml?branch=main)](https://github.com/MBanucu/mount-image/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/MBanucu/mount-image/branch/main/graph/badge.svg)](https://codecov.io/gh/MBanucu/mount-image)
+
+[![Downloads total](https://pepy.tech/badge/mount-image)](https://pepy.tech/project/mount-image)
+[![Downloads/month](https://pepy.tech/badge/mount-image/month)](https://pepy.tech/project/mount-image)
+[![Downloads/week](https://pepy.tech/badge/mount-image/week)](https://pepy.tech/project/mount-image)
+
 Cross-platform disk image mounting via loop devices (Linux) or hdiutil (macOS).
 
 ## Features
