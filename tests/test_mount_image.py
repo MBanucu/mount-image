@@ -88,6 +88,264 @@ class TestLinuxMount(unittest.TestCase):
         self.assertEqual(mount_point, '/tmp/mount_image_abc')
 
 
+class TestLinuxStrategyFunctions(unittest.TestCase):
+    """Test internal strategy functions by mocking subprocess.run."""
+
+    @classmethod
+    def setUpClass(cls):
+        import platform
+        if platform.system() != 'Linux':
+            raise unittest.SkipTest('Linux-only tests')
+
+    # ── _sudo_mount ──────────────────────────────────────────────
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    @patch('mount_image._mount_linux.tempfile.mkdtemp')
+    def test_sudo_mount_success(self, mock_mkdtemp, mock_run):
+        mock_mkdtemp.return_value = '/tmp/mp'
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout='/dev/loop0\n'),
+            MagicMock(returncode=0, stdout=''),
+        ]
+        from mount_image._mount_linux import _sudo_mount
+        dev, mp = _sudo_mount('/tmp/test.img', 'vfat', None)
+        self.assertEqual(dev, '/dev/loop0')
+        self.assertEqual(mp, '/tmp/mp')
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    @patch('mount_image._mount_linux.tempfile.mkdtemp')
+    def test_sudo_mount_losetup_fails(self, mock_mkdtemp, mock_run):
+        mock_mkdtemp.return_value = '/tmp/mp'
+        mock_run.return_value = MagicMock(returncode=1, stderr='Permission denied')
+        from mount_image._mount_linux import _sudo_mount
+        with self.assertRaises(RuntimeError) as ctx:
+            _sudo_mount('/tmp/test.img', 'vfat', None)
+        self.assertIn('losetup failed', str(ctx.exception))
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    @patch('mount_image._mount_linux.tempfile.mkdtemp')
+    def test_sudo_mount_mount_fails_cleans_up(self, mock_mkdtemp, mock_run):
+        mock_mkdtemp.return_value = '/tmp/mp'
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout='/dev/loop0\n'),
+            MagicMock(returncode=1, stderr='mount failed'),
+            MagicMock(returncode=0, stdout=''),
+        ]
+        from mount_image._mount_linux import _sudo_mount
+        with self.assertRaises(RuntimeError) as ctx:
+            _sudo_mount('/tmp/test.img', 'vfat', None)
+        self.assertIn('mount failed', str(ctx.exception))
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    @patch('mount_image._mount_linux.tempfile.mkdtemp')
+    def test_sudo_mount_custom_options(self, mock_mkdtemp, mock_run):
+        mock_mkdtemp.return_value = '/tmp/mp'
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout='/dev/loop0\n'),
+            MagicMock(returncode=0, stdout=''),
+        ]
+        from mount_image._mount_linux import _sudo_mount
+        _sudo_mount('/tmp/test.img', 'ext4', ['ro', 'noexec'])
+        args = mock_run.call_args_list[1][0][0]
+        self.assertIn('-o', args)
+        self.assertIn('ro,noexec', args)
+
+    # ── _sudo_attach / _sudo_detach ──────────────────────────────
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    def test_sudo_attach_success(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout='/dev/loop0\n')
+        from mount_image._mount_linux import _sudo_attach
+        dev = _sudo_attach('/tmp/test.img')
+        self.assertEqual(dev, '/dev/loop0')
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    def test_sudo_attach_fails(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stderr='error')
+        from mount_image._mount_linux import _sudo_attach
+        with self.assertRaises(RuntimeError):
+            _sudo_attach('/tmp/test.img')
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    def test_sudo_detach(self, mock_run):
+        from mount_image._mount_linux import _sudo_detach
+        _sudo_detach('/dev/loop0')
+        mock_run.assert_called_once_with(
+            ['sudo', 'losetup', '-d', '/dev/loop0'], capture_output=True)
+
+    # ── _udisks_mount ────────────────────────────────────────────
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    def test_udisks_mount_success(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=0,
+                      stdout='Mapped file /tmp/test.img as /dev/loop0.\n'),
+            MagicMock(returncode=0,
+                      stdout='Mounted /dev/loop0 at /media/user/NO NAME.\n'),
+        ]
+        from mount_image._mount_linux import _udisks_mount
+        dev, mp = _udisks_mount('/tmp/test.img', 'vfat', None)
+        self.assertEqual(dev, '/dev/loop0')
+        self.assertEqual(mp, '/media/user/NO NAME')
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    def test_udisks_mount_loop_setup_fails(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1, stdout='', stderr='error')
+        from mount_image._mount_linux import _udisks_mount
+        with self.assertRaises(RuntimeError) as ctx:
+            _udisks_mount('/tmp/test.img', 'vfat', None)
+        self.assertIn('loop-setup failed', str(ctx.exception))
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    def test_udisks_mount_mount_fails_cleans_up(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=0,
+                      stdout='Mapped file /tmp/test.img as /dev/loop0.\n'),
+            MagicMock(returncode=1, stdout='', stderr='mount error'),
+            MagicMock(returncode=0),
+        ]
+        from mount_image._mount_linux import _udisks_mount
+        with self.assertRaises(RuntimeError) as ctx:
+            _udisks_mount('/tmp/test.img', 'vfat', None)
+        self.assertIn('mount failed', str(ctx.exception))
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    def test_udisks_mount_unparsable_device(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout='garbage\n', stderr='')
+        from mount_image._mount_linux import _udisks_mount
+        with self.assertRaises(RuntimeError) as ctx:
+            _udisks_mount('/tmp/test.img', 'vfat', None)
+        self.assertIn('could not parse device', str(ctx.exception))
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    def test_udisks_mount_unparsable_mount_point(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=0,
+                      stdout='Mapped file /tmp/test.img as /dev/loop0.\n'),
+            MagicMock(returncode=0, stdout='no mount here\n', stderr=''),
+        ]
+        from mount_image._mount_linux import _udisks_mount
+        with self.assertRaises(RuntimeError) as ctx:
+            _udisks_mount('/tmp/test.img', 'vfat', None)
+        self.assertIn('could not parse mount point', str(ctx.exception))
+
+    # ── _udisks_attach / _udisks_detach ──────────────────────────
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    def test_udisks_attach_success(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout='Mapped file /tmp/test.img as /dev/loop0.\n')
+        from mount_image._mount_linux import _udisks_attach
+        dev = _udisks_attach('/tmp/test.img')
+        self.assertEqual(dev, '/dev/loop0')
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    def test_udisks_attach_fails(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stderr='error')
+        from mount_image._mount_linux import _udisks_attach
+        with self.assertRaises(RuntimeError):
+            _udisks_attach('/tmp/test.img')
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    def test_udisks_attach_unparsable(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout='garbage\n')
+        from mount_image._mount_linux import _udisks_attach
+        with self.assertRaises(RuntimeError) as ctx:
+            _udisks_attach('/tmp/test.img')
+        self.assertIn('could not parse device', str(ctx.exception))
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    def test_udisks_detach(self, mock_run):
+        from mount_image._mount_linux import _udisks_detach
+        _udisks_detach('/dev/loop0')
+        mock_run.assert_called_once_with(
+            ['udisksctl', 'loop-delete', '-b', '/dev/loop0',
+             '--no-user-interaction'], capture_output=True)
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    def test_udisks_umount_inner(self, mock_run):
+        from mount_image._mount_linux import _udisks_umount_inner
+        _udisks_umount_inner('/dev/loop0')
+        mock_run.assert_called_once_with(
+            ['udisksctl', 'unmount', '-b', '/dev/loop0',
+             '--no-user-interaction'], capture_output=True)
+
+    # ── parsing helpers ──────────────────────────────────────────
+
+    def test_parse_udisks_dev(self):
+        from mount_image._mount_linux import _parse_udisks_dev
+        self.assertEqual(
+            _parse_udisks_dev('Mapped file img.img as /dev/loop0.\n'),
+            '/dev/loop0')
+
+    def test_parse_udisks_dev_no_dev(self):
+        from mount_image._mount_linux import _parse_udisks_dev
+        self.assertIsNone(_parse_udisks_dev('garbage\n'))
+        self.assertIsNone(_parse_udisks_dev(''))
+
+    def test_parse_udisks_mount(self):
+        from mount_image._mount_linux import _parse_udisks_mount
+        self.assertEqual(
+            _parse_udisks_mount(
+                'Mounted /dev/loop0 at /media/user/NO NAME.\n'),
+            '/media/user/NO NAME')
+
+    def test_parse_udisks_mount_no_mount(self):
+        from mount_image._mount_linux import _parse_udisks_mount
+        self.assertIsNone(_parse_udisks_mount('garbage\n'))
+        self.assertIsNone(_parse_udisks_mount(''))
+
+    # ── _guestmount_mount ────────────────────────────────────────
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    @patch('mount_image._mount_linux.tempfile.mkdtemp')
+    def test_guestmount_mount_success(self, mock_mkdtemp, mock_run):
+        mock_mkdtemp.return_value = '/tmp/mp'
+        mock_run.return_value = MagicMock(returncode=0, stdout='', stderr='')
+        from mount_image._mount_linux import _guestmount_mount
+        dev, mp = _guestmount_mount('/tmp/test.img', 'vfat', None)
+        self.assertEqual(dev, '/tmp/mp')
+        self.assertEqual(mp, '/tmp/mp')
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    @patch('mount_image._mount_linux.tempfile.mkdtemp')
+    def test_guestmount_mount_fails(self, mock_mkdtemp, mock_run):
+        mock_mkdtemp.return_value = '/tmp/mp'
+        mock_run.return_value = MagicMock(returncode=1, stderr='fail')
+        from mount_image._mount_linux import _guestmount_mount
+        with self.assertRaises(RuntimeError) as ctx:
+            _guestmount_mount('/tmp/test.img', 'vfat', None)
+        self.assertIn('guestmount failed', str(ctx.exception))
+
+    @patch('mount_image._mount_linux.subprocess.run')
+    @patch('mount_image._mount_linux.tempfile.mkdtemp')
+    def test_guestmount_mount_custom_options(self, mock_mkdtemp, mock_run):
+        mock_mkdtemp.return_value = '/tmp/mp'
+        mock_run.return_value = MagicMock(returncode=0)
+        from mount_image._mount_linux import _guestmount_mount
+        _guestmount_mount('/tmp/test.img', 'vfat', ['ro', 'noexec'])
+        args = mock_run.call_args[0][0]
+        self.assertIn('-o', args)
+        self.assertIn('ro', args)
+
+    # ── teardown with populated _teardown dict ───────────────────
+
+    @patch('mount_image._mount_linux._teardown',
+           {'/dev/loop0': (MagicMock(), MagicMock(), '/tmp/mp')})
+    def test_umount_image_with_teardown(self):
+        from mount_image._mount_linux import umount_image
+        umount_image('/dev/loop0')
+
+    @patch('mount_image._mount_linux._teardown',
+           {'/dev/loop0': (MagicMock(), MagicMock(), None)})
+    def test_detach_image_with_teardown(self):
+        from mount_image._mount_linux import detach_image
+        detach_image('/dev/loop0')
+
+
 def _make_plist(entities: list[dict]) -> str:
     import plistlib
     return plistlib.dumps(

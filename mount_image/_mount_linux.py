@@ -139,11 +139,10 @@ def _udisks_attach(image_path: str) -> str:
 
 def _parse_udisks_dev(stdout: str) -> str | None:
     for line in stdout.splitlines():
-        if 'Mapped file' in line:
-            continue
-        parts = line.strip().split()
-        if parts and parts[-1].startswith('/dev/'):
-            return parts[-1]
+        if ' as ' in line:
+            parts = line.strip().split()
+            if parts and parts[-1].rstrip('.').startswith('/dev/'):
+                return parts[-1].rstrip('.')
     return None
 
 
