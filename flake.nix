@@ -1,17 +1,23 @@
 {
-  description = "mount-image: Cross-platform disk image mounting via loop devices (Linux) or hdiutil (macOS)";
+  description = "mount-image: Cross-platform disk image mounting — strategy selector";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    mount-resolve.url = "github:MBanucu/mount-resolve";
+    mount-image-sudo.url = "github:MBanucu/mount-image-sudo";
+    mount-image-udisks.url = "github:MBanucu/mount-image-udisks";
+    mount-image-guestmount.url = "github:MBanucu/mount-image-guestmount";
+    mount-image-hdiutil.url = "github:MBanucu/mount-image-hdiutil";
   };
 
   outputs =
     { self
     , nixpkgs
     , flake-utils
-    , mount-resolve
+    , mount-image-sudo
+    , mount-image-udisks
+    , mount-image-guestmount
+    , mount-image-hdiutil
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -19,7 +25,10 @@
         pkgs = import nixpkgs {
           inherit system;
           overlays = [
-            mount-resolve.overlays.default
+            mount-image-sudo.overlays.default
+            mount-image-udisks.overlays.default
+            mount-image-guestmount.overlays.default
+            mount-image-hdiutil.overlays.default
             self.overlays.default
           ];
         };

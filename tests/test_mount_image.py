@@ -1,4 +1,4 @@
-"""Unit tests for mount_image — platform dispatch and mocked subprocess calls."""
+"""Unit tests for mount_image — platform dispatch and orchestration."""
 
 import unittest
 from unittest.mock import patch, MagicMock
@@ -13,7 +13,9 @@ class TestImports(unittest.TestCase):
         self.assertTrue(callable(detach_image))
 
 
-class TestLinuxMount(unittest.TestCase):
+class TestLinuxOrchestrator(unittest.TestCase):
+    """Test the orchestrator's strategy chain (Linux)."""
+
     @classmethod
     def setUpClass(cls):
         import platform
@@ -87,253 +89,6 @@ class TestLinuxMount(unittest.TestCase):
         self.assertEqual(device, '/dev/loop0')
         self.assertEqual(mount_point, '/tmp/mount_image_abc')
 
-
-class TestLinuxStrategyFunctions(unittest.TestCase):
-    """Test internal strategy functions by mocking subprocess.run."""
-
-    @classmethod
-    def setUpClass(cls):
-        import platform
-        if platform.system() != 'Linux':
-            raise unittest.SkipTest('Linux-only tests')
-
-    # ── _sudo_mount ──────────────────────────────────────────────
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    @patch('mount_image._mount_linux.tempfile.mkdtemp')
-    def test_sudo_mount_success(self, mock_mkdtemp, mock_run):
-        mock_mkdtemp.return_value = '/tmp/mp'
-        mock_run.side_effect = [
-            MagicMock(returncode=0, stdout='/dev/loop0\n'),
-            MagicMock(returncode=0, stdout=''),
-        ]
-        from mount_image._mount_linux import _sudo_mount
-        dev, mp = _sudo_mount('/tmp/test.img', 'vfat', None)
-        self.assertEqual(dev, '/dev/loop0')
-        self.assertEqual(mp, '/tmp/mp')
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    @patch('mount_image._mount_linux.tempfile.mkdtemp')
-    def test_sudo_mount_losetup_fails(self, mock_mkdtemp, mock_run):
-        mock_mkdtemp.return_value = '/tmp/mp'
-        mock_run.return_value = MagicMock(returncode=1, stderr='Permission denied')
-        from mount_image._mount_linux import _sudo_mount
-        with self.assertRaises(RuntimeError) as ctx:
-            _sudo_mount('/tmp/test.img', 'vfat', None)
-        self.assertIn('losetup failed', str(ctx.exception))
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    @patch('mount_image._mount_linux.tempfile.mkdtemp')
-    def test_sudo_mount_mount_fails_cleans_up(self, mock_mkdtemp, mock_run):
-        mock_mkdtemp.return_value = '/tmp/mp'
-        mock_run.side_effect = [
-            MagicMock(returncode=0, stdout='/dev/loop0\n'),
-            MagicMock(returncode=1, stderr='mount failed'),
-            MagicMock(returncode=0, stdout=''),
-        ]
-        from mount_image._mount_linux import _sudo_mount
-        with self.assertRaises(RuntimeError) as ctx:
-            _sudo_mount('/tmp/test.img', 'vfat', None)
-        self.assertIn('mount failed', str(ctx.exception))
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    @patch('mount_image._mount_linux.tempfile.mkdtemp')
-    def test_sudo_mount_custom_options(self, mock_mkdtemp, mock_run):
-        mock_mkdtemp.return_value = '/tmp/mp'
-        mock_run.side_effect = [
-            MagicMock(returncode=0, stdout='/dev/loop0\n'),
-            MagicMock(returncode=0, stdout=''),
-        ]
-        from mount_image._mount_linux import _sudo_mount
-        _sudo_mount('/tmp/test.img', 'ext4', ['ro', 'noexec'])
-        args = mock_run.call_args_list[1][0][0]
-        self.assertIn('-o', args)
-        self.assertIn('ro,noexec', args)
-
-    # ── _sudo_attach / _sudo_detach ──────────────────────────────
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_sudo_attach_success(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout='/dev/loop0\n')
-        from mount_image._mount_linux import _sudo_attach
-        dev = _sudo_attach('/tmp/test.img')
-        self.assertEqual(dev, '/dev/loop0')
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_sudo_attach_fails(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1, stderr='error')
-        from mount_image._mount_linux import _sudo_attach
-        with self.assertRaises(RuntimeError):
-            _sudo_attach('/tmp/test.img')
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_sudo_detach(self, mock_run):
-        from mount_image._mount_linux import _sudo_detach
-        _sudo_detach('/dev/loop0')
-        mock_run.assert_called_once_with(
-            ['sudo', 'losetup', '-d', '/dev/loop0'], capture_output=True)
-
-    # ── _udisks_mount ────────────────────────────────────────────
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_udisks_mount_success(self, mock_run):
-        mock_run.side_effect = [
-            MagicMock(returncode=0,
-                      stdout='Mapped file /tmp/test.img as /dev/loop0.\n'),
-            MagicMock(returncode=0,
-                      stdout='Mounted /dev/loop0 at /media/user/NO NAME.\n'),
-        ]
-        from mount_image._mount_linux import _udisks_mount
-        dev, mp = _udisks_mount('/tmp/test.img', 'vfat', None)
-        self.assertEqual(dev, '/dev/loop0')
-        self.assertEqual(mp, '/media/user/NO NAME')
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_udisks_mount_loop_setup_fails(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=1, stdout='', stderr='error')
-        from mount_image._mount_linux import _udisks_mount
-        with self.assertRaises(RuntimeError) as ctx:
-            _udisks_mount('/tmp/test.img', 'vfat', None)
-        self.assertIn('loop-setup failed', str(ctx.exception))
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_udisks_mount_mount_fails_cleans_up(self, mock_run):
-        mock_run.side_effect = [
-            MagicMock(returncode=0,
-                      stdout='Mapped file /tmp/test.img as /dev/loop0.\n'),
-            MagicMock(returncode=1, stdout='', stderr='mount error'),
-            MagicMock(returncode=0),
-        ]
-        from mount_image._mount_linux import _udisks_mount
-        with self.assertRaises(RuntimeError) as ctx:
-            _udisks_mount('/tmp/test.img', 'vfat', None)
-        self.assertIn('mount failed', str(ctx.exception))
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_udisks_mount_unparsable_device(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout='garbage\n', stderr='')
-        from mount_image._mount_linux import _udisks_mount
-        with self.assertRaises(RuntimeError) as ctx:
-            _udisks_mount('/tmp/test.img', 'vfat', None)
-        self.assertIn('could not parse device', str(ctx.exception))
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_udisks_mount_unparsable_mount_point(self, mock_run):
-        mock_run.side_effect = [
-            MagicMock(returncode=0,
-                      stdout='Mapped file /tmp/test.img as /dev/loop0.\n'),
-            MagicMock(returncode=0, stdout='no mount here\n', stderr=''),
-        ]
-        from mount_image._mount_linux import _udisks_mount
-        with self.assertRaises(RuntimeError) as ctx:
-            _udisks_mount('/tmp/test.img', 'vfat', None)
-        self.assertIn('could not parse mount point', str(ctx.exception))
-
-    # ── _udisks_attach / _udisks_detach ──────────────────────────
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_udisks_attach_success(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout='Mapped file /tmp/test.img as /dev/loop0.\n')
-        from mount_image._mount_linux import _udisks_attach
-        dev = _udisks_attach('/tmp/test.img')
-        self.assertEqual(dev, '/dev/loop0')
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_udisks_attach_fails(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1, stderr='error')
-        from mount_image._mount_linux import _udisks_attach
-        with self.assertRaises(RuntimeError):
-            _udisks_attach('/tmp/test.img')
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_udisks_attach_unparsable(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout='garbage\n')
-        from mount_image._mount_linux import _udisks_attach
-        with self.assertRaises(RuntimeError) as ctx:
-            _udisks_attach('/tmp/test.img')
-        self.assertIn('could not parse device', str(ctx.exception))
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_udisks_detach(self, mock_run):
-        from mount_image._mount_linux import _udisks_detach
-        _udisks_detach('/dev/loop0')
-        mock_run.assert_called_once_with(
-            ['udisksctl', 'loop-delete', '-b', '/dev/loop0',
-             '--no-user-interaction'], capture_output=True)
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    def test_udisks_umount_inner(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stderr='')
-        from mount_image._mount_linux import _udisks_umount_inner
-        _udisks_umount_inner('/dev/loop0')
-        mock_run.assert_called_once_with(
-            ['udisksctl', 'unmount', '-b', '/dev/loop0',
-             '--no-user-interaction'], capture_output=True, text=True)
-
-    # ── parsing helpers ──────────────────────────────────────────
-
-    def test_parse_udisks_dev(self):
-        from mount_image._mount_linux import _parse_udisks_dev
-        self.assertEqual(
-            _parse_udisks_dev('Mapped file img.img as /dev/loop0.\n'),
-            '/dev/loop0')
-
-    def test_parse_udisks_dev_no_dev(self):
-        from mount_image._mount_linux import _parse_udisks_dev
-        self.assertIsNone(_parse_udisks_dev('garbage\n'))
-        self.assertIsNone(_parse_udisks_dev(''))
-
-    def test_parse_udisks_mount(self):
-        from mount_image._mount_linux import _parse_udisks_mount
-        self.assertEqual(
-            _parse_udisks_mount(
-                'Mounted /dev/loop0 at /media/user/NO NAME.\n'),
-            '/media/user/NO NAME')
-
-    def test_parse_udisks_mount_no_mount(self):
-        from mount_image._mount_linux import _parse_udisks_mount
-        self.assertIsNone(_parse_udisks_mount('garbage\n'))
-        self.assertIsNone(_parse_udisks_mount(''))
-
-    # ── _guestmount_mount ────────────────────────────────────────
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    @patch('mount_image._mount_linux.tempfile.mkdtemp')
-    def test_guestmount_mount_success(self, mock_mkdtemp, mock_run):
-        mock_mkdtemp.return_value = '/tmp/mp'
-        mock_run.return_value = MagicMock(returncode=0, stdout='', stderr='')
-        from mount_image._mount_linux import _guestmount_mount
-        dev, mp = _guestmount_mount('/tmp/test.img', 'vfat', None)
-        self.assertEqual(dev, '/tmp/mp')
-        self.assertEqual(mp, '/tmp/mp')
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    @patch('mount_image._mount_linux.tempfile.mkdtemp')
-    def test_guestmount_mount_fails(self, mock_mkdtemp, mock_run):
-        mock_mkdtemp.return_value = '/tmp/mp'
-        mock_run.return_value = MagicMock(returncode=1, stderr='fail')
-        from mount_image._mount_linux import _guestmount_mount
-        with self.assertRaises(RuntimeError) as ctx:
-            _guestmount_mount('/tmp/test.img', 'vfat', None)
-        self.assertIn('guestmount failed', str(ctx.exception))
-
-    @patch('mount_image._mount_linux.subprocess.run')
-    @patch('mount_image._mount_linux.tempfile.mkdtemp')
-    def test_guestmount_mount_custom_options(self, mock_mkdtemp, mock_run):
-        mock_mkdtemp.return_value = '/tmp/mp'
-        mock_run.return_value = MagicMock(returncode=0)
-        from mount_image._mount_linux import _guestmount_mount
-        _guestmount_mount('/tmp/test.img', 'vfat', ['ro', 'noexec'])
-        args = mock_run.call_args[0][0]
-        self.assertIn('-o', args)
-        self.assertIn('ro', args)
-
-    # ── teardown with populated _teardown dict ───────────────────
-
     @patch('mount_image._mount_linux._teardown',
            {'/dev/loop0': (MagicMock(), MagicMock(), '/tmp/mp')})
     def test_umount_image_with_teardown(self):
@@ -347,7 +102,7 @@ class TestLinuxStrategyFunctions(unittest.TestCase):
         detach_image('/dev/loop0')
 
 
-def _make_plist(entities: list[dict]) -> str:
+def _make_plist(entities):
     import plistlib
     return plistlib.dumps(
         {'system-entities': entities},
@@ -356,29 +111,35 @@ def _make_plist(entities: list[dict]) -> str:
 
 
 class TestDarwinMount(unittest.TestCase):
-    # ── mount_image ──────────────────────────────────────────────────
+    """Test hdiutil strategy (imported from mount_image_hdiutil)."""
 
-    @patch('mount_image._mount_darwin.subprocess.run')
+    @classmethod
+    def setUpClass(cls):
+        import platform
+        if platform.system() != 'Darwin':
+            raise unittest.SkipTest('macOS-only: mount-image-hdiutil not installed')
+
+    @patch('mount_image_hdiutil.subprocess.run')
     def test_mount_image_auto_mount_succeeds(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout=_make_plist([
             {'dev-entry': '/dev/disk5', 'mount-point': '/Volumes/Test'},
         ]), stderr='')
-        from mount_image._mount_darwin import mount_image
+        from mount_image_hdiutil import mount_image
         device, mount_point = mount_image('/tmp/test.img')
         self.assertEqual(device, '/dev/disk5')
         self.assertEqual(mount_point, '/Volumes/Test')
 
-    @patch('mount_image._mount_darwin.subprocess.run')
+    @patch('mount_image_hdiutil.subprocess.run')
     def test_mount_image_attach_fails(self, mock_run):
         mock_run.return_value = MagicMock(
             returncode=1, stdout='', stderr='hdiutil: attach failed')
-        from mount_image._mount_darwin import mount_image
+        from mount_image_hdiutil import mount_image
         with self.assertRaises(RuntimeError) as ctx:
             mount_image('/tmp/test.img')
         self.assertIn('hdiutil attach failed', str(ctx.exception))
 
-    @patch('mount_image._mount_darwin.subprocess.run')
-    @patch('mount_image._mount_darwin.tempfile.mkdtemp')
+    @patch('mount_image_hdiutil.subprocess.run')
+    @patch('mount_image_hdiutil.tempfile.mkdtemp')
     def test_mount_image_mount_via_partition(self, mock_mkdtemp, mock_run):
         mock_mkdtemp.return_value = '/tmp/mount_image_abc'
         mock_run.side_effect = [
@@ -392,32 +153,32 @@ class TestDarwinMount(unittest.TestCase):
             ]), stderr=''),
             MagicMock(returncode=0, stdout='', stderr=''),
         ]
-        from mount_image._mount_darwin import mount_image
+        from mount_image_hdiutil import mount_image
         device, mount_point = mount_image('/tmp/test.img')
         self.assertEqual(device, '/dev/disk5s1')
         self.assertEqual(mount_point, '/tmp/mount_image_abc')
 
-    @patch('mount_image._mount_darwin.subprocess.run')
-    @patch('mount_image._mount_darwin.tempfile.mkdtemp')
-    def test_mount_image_mount_via_whole_disk(self, mock_mkdtemp, mock_run):
+    @patch('mount_image_hdiutil.subprocess.run')
+    @patch('mount_image_hdiutil.tempfile.mkdtemp')
+    def test_mount_image_via_whole_disk(self, mock_mkdtemp, mock_run):
         mock_mkdtemp.return_value = '/tmp/mount_image_abc'
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout=_make_plist([
                 {'dev-entry': '/dev/disk5'},
-            ]), stderr=''),               # auto-mount: no mount-point → detach
-            MagicMock(returncode=0),       # detach
+            ]), stderr=''),
+            MagicMock(returncode=0),
             MagicMock(returncode=0, stdout=_make_plist([
                 {'dev-entry': '/dev/disk5'},
-            ]), stderr=''),               # nomount: whole-disk, no partition loop
-            MagicMock(returncode=0, stdout='', stderr=''),  # whole-disk mount succeeds
+            ]), stderr=''),
+            MagicMock(returncode=0, stdout='', stderr=''),
         ]
-        from mount_image._mount_darwin import mount_image
+        from mount_image_hdiutil import mount_image
         device, mount_point = mount_image('/tmp/test.img')
         self.assertEqual(device, '/dev/disk5')
         self.assertEqual(mount_point, '/tmp/mount_image_abc')
 
-    @patch('mount_image._mount_darwin.subprocess.run')
-    @patch('mount_image._mount_darwin.tempfile.mkdtemp')
+    @patch('mount_image_hdiutil.subprocess.run')
+    @patch('mount_image_hdiutil.tempfile.mkdtemp')
     def test_mount_image_all_mounts_fail(self, mock_mkdtemp, mock_run):
         mock_mkdtemp.return_value = '/tmp/mount_image_abc'
         mock_run.side_effect = [
@@ -433,86 +194,37 @@ class TestDarwinMount(unittest.TestCase):
             MagicMock(returncode=1),
             MagicMock(returncode=0),
         ]
-        from mount_image._mount_darwin import mount_image
+        from mount_image_hdiutil import mount_image
         with self.assertRaises(RuntimeError) as ctx:
             mount_image('/tmp/test.img')
         self.assertIn('mount failed', str(ctx.exception))
 
-    @patch('mount_image._mount_darwin.subprocess.run')
-    @patch('mount_image._mount_darwin.tempfile.mkdtemp')
-    def test_mount_image_nomount_attach_fails(self, mock_mkdtemp, mock_run):
-        mock_mkdtemp.return_value = '/tmp/mount_image_abc'
-        mock_run.side_effect = [
-            MagicMock(returncode=0, stdout=_make_plist([
-                {'dev-entry': '/dev/disk5'},
-            ]), stderr=''),
-            MagicMock(returncode=0),
-            MagicMock(returncode=1, stdout='', stderr='nomount failed'),
-        ]
-        from mount_image._mount_darwin import mount_image
-        with self.assertRaises(RuntimeError) as ctx:
-            mount_image('/tmp/test.img')
-        self.assertIn('nomount', str(ctx.exception))
-
-    # ── umount_image ─────────────────────────────────────────────────
-
-    @patch('mount_image._mount_darwin.subprocess.run')
+    @patch('mount_image_hdiutil.subprocess.run')
     def test_umount_image_with_mount_point(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
-        from mount_image._mount_darwin import umount_image
+        from mount_image_hdiutil import umount_image
         umount_image('/dev/disk5', '/tmp/mount_point')
 
-    @patch('mount_image._mount_darwin.subprocess.run')
+    @patch('mount_image_hdiutil.subprocess.run')
     def test_umount_image_no_mount_point(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
-        from mount_image._mount_darwin import umount_image
+        from mount_image_hdiutil import umount_image
         umount_image('/dev/disk5')
 
-    # ── attach_image ─────────────────────────────────────────────────
-
-    @patch('mount_image._mount_darwin.subprocess.run')
+    @patch('mount_image_hdiutil.subprocess.run')
     def test_attach_image_whole_disk(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout=_make_plist([
             {'dev-entry': '/dev/disk5'},
             {'dev-entry': '/dev/disk5s1'},
         ]), stderr='')
-        from mount_image._mount_darwin import attach_image
+        from mount_image_hdiutil import attach_image
         device = attach_image('/tmp/test.img')
         self.assertEqual(device, '/dev/disk5')
 
-    @patch('mount_image._mount_darwin.subprocess.run')
-    def test_attach_image_only_slices_fallback(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout=_make_plist([
-            {'dev-entry': '/dev/disk5s1'},
-        ]), stderr='')
-        from mount_image._mount_darwin import attach_image
-        device = attach_image('/tmp/test.img')
-        self.assertEqual(device, '/dev/disk5s1')
-
-    @patch('mount_image._mount_darwin.subprocess.run')
-    def test_attach_image_no_entities(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout=_make_plist([]),
-                                           stderr='')
-        from mount_image._mount_darwin import attach_image
-        with self.assertRaises(RuntimeError) as ctx:
-            attach_image('/tmp/test.img')
-        self.assertIn('no devices', str(ctx.exception))
-
-    @patch('mount_image._mount_darwin.subprocess.run')
-    def test_attach_image_attach_fails(self, mock_run):
-        mock_run.return_value = MagicMock(
-            returncode=1, stdout='', stderr='hdiutil: attach failed')
-        from mount_image._mount_darwin import attach_image
-        with self.assertRaises(RuntimeError) as ctx:
-            attach_image('/tmp/test.img')
-        self.assertIn('hdiutil attach', str(ctx.exception))
-
-    # ── detach_image ─────────────────────────────────────────────────
-
-    @patch('mount_image._mount_darwin.subprocess.run')
+    @patch('mount_image_hdiutil.subprocess.run')
     def test_detach_image(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0)
-        from mount_image._mount_darwin import detach_image
+        from mount_image_hdiutil import detach_image
         detach_image('/dev/disk5')
 
 
@@ -524,11 +236,12 @@ class TestPlatformDispatch(unittest.TestCase):
             import mount_image._mount
             importlib.reload(mount_image._mount)
             from mount_image._mount import mount_image
-            # The linux function should have the string 'losetup' in source
             self.assertTrue(callable(mount_image))
 
     def test_darwin_import(self):
         import platform
+        if platform.system() != 'Darwin':
+            raise unittest.SkipTest('mount-image-hdiutil not installed on non-Darwin')
         with patch.object(platform, 'system', return_value='Darwin'):
             import importlib
             import mount_image._mount
