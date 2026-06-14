@@ -112,9 +112,11 @@ def _udisks_mount(image_path: str, fstype: str, options: list[str] | None
 
 
 def _udisks_umount_inner(device: str):
-    subprocess.run(
+    r = subprocess.run(
         ['udisksctl', 'unmount', '-b', device, '--no-user-interaction'],
-        capture_output=True)
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"udisksctl unmount failed: {r.stderr.strip()}")
 
 
 def _udisks_detach(device: str):

@@ -267,11 +267,12 @@ class TestLinuxStrategyFunctions(unittest.TestCase):
 
     @patch('mount_image._mount_linux.subprocess.run')
     def test_udisks_umount_inner(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stderr='')
         from mount_image._mount_linux import _udisks_umount_inner
         _udisks_umount_inner('/dev/loop0')
         mock_run.assert_called_once_with(
             ['udisksctl', 'unmount', '-b', '/dev/loop0',
-             '--no-user-interaction'], capture_output=True)
+             '--no-user-interaction'], capture_output=True, text=True)
 
     # ── parsing helpers ──────────────────────────────────────────
 
