@@ -92,85 +92,152 @@ class TestLinuxMount(unittest.TestCase):
         self.assertEqual(mount_point, '/tmp/mount_image_abc')
 
 
+def _make_plist(entities: list[dict]) -> str:
+    import plistlib
+    return plistlib.dumps(
+        {'system-entities': entities},
+        fmt=plistlib.FMT_XML,
+    ).decode()
+
+
 class TestDarwinMount(unittest.TestCase):
+    # ── mount_image ──────────────────────────────────────────────────
+
     @patch('mount_image._mount_darwin.subprocess.run')
-    @patch('mount_image._mount_darwin.tempfile.mkdtemp')
-    def test_attach_image(self, mock_mkdtemp, mock_run):
-        mock_mkdtemp.return_value = '/tmp/mount_image_abc'
-        plist = '''<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>system-entities</key>
-    <array>
-        <dict>
-            <key>dev-entry</key>
-            <string>/dev/disk5</string>
-            <key>mount-point</key>
-            <string>/Volumes/Test</string>
-        </dict>
-        <dict>
-            <key>dev-entry</key>
-            <string>/dev/disk5s1</string>
-            <key>mount-point</key>
-            <string>/Volumes/Test</string>
-        </dict>
-    </array>
-</dict>
-</plist>'''
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=plist,
-            stderr='',
-        )
+    def test_mount_image_auto_mount_succeeds(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout=_make_plist([
+            {'dev-entry': '/dev/disk5', 'mount-point': '/Volumes/Test'},
+        ]), stderr='')
         from mount_image._mount_darwin import mount_image
         device, mount_point = mount_image('/tmp/test.img')
         self.assertEqual(device, '/dev/disk5')
         self.assertEqual(mount_point, '/Volumes/Test')
 
     @patch('mount_image._mount_darwin.subprocess.run')
-    def test_attach_raw_image(self, mock_run):
-        plist = '''<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>system-entities</key>
-    <array>
-        <dict>
-            <key>dev-entry</key>
-            <string>/dev/disk5</string>
-        </dict>
-        <dict>
-            <key>dev-entry</key>
-            <string>/dev/disk5s1</string>
-        </dict>
-    </array>
-</dict>
-</plist>'''
+    def test_mount_image_attach_fails(self, mock_run):
         mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=plist,
-            stderr='',
-        )
+            returncode=1, stdout='', stderr='hdiutil: attach failed')
+        from mount_image._mount_darwin import mount_image
+        with self.assertRaises(RuntimeError) as ctx:
+            mount_image('/tmp/test.img')
+        self.assertIn('hdiutil attach failed', str(ctx.exception))
+
+    @patch('mount_image._mount_darwin.subprocess.run')
+    @patch('mount_image._mount_darwin.tempfile.mkdtemp')
+    def test_mount_image_mount_via_partition(self, mock_mkdtemp, mock_run):
+        mock_mkdtemp.return_value = '/tmp/mount_image_abc'
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=_make_plist([
+                {'dev-entry': '/dev/disk5'},
+            ]), stderr=''),
+            MagicMock(returncode=0),
+            MagicMock(returncode=0, stdout=_make_plist([
+                {'dev-entry': '/dev/disk5'},
+                {'dev-entry': '/dev/disk5s1'},
+            ]), stderr=''),
+            MagicMock(returncode=0, stdout='', stderr=''),
+        ]
+        from mount_image._mount_darwin import mount_image
+        device, mount_point = mount_image('/tmp/test.img')
+        self.assertEqual(device, '/dev/disk5s1')
+        self.assertEqual(mount_point, '/tmp/mount_image_abc')
+
+    @patch('mount_image._mount_darwin.subprocess.run')
+    @patch('mount_image._mount_darwin.tempfile.mkdtemp')
+    def test_mount_image_mount_via_whole_disk(self, mock_mkdtemp, mock_run):
+        mock_mkdtemp.return_value = '/tmp/mount_image_abc'
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=_make_plist([
+                {'dev-entry': '/dev/disk5'},
+            ]), stderr=''),               # auto-mount: no mount-point → detach
+            MagicMock(returncode=0),       # detach
+            MagicMock(returncode=0, stdout=_make_plist([
+                {'dev-entry': '/dev/disk5'},
+            ]), stderr=''),               # nomount: whole-disk, no partition loop
+            MagicMock(returncode=0, stdout='', stderr=''),  # whole-disk mount succeeds
+        ]
+        from mount_image._mount_darwin import mount_image
+        device, mount_point = mount_image('/tmp/test.img')
+        self.assertEqual(device, '/dev/disk5')
+        self.assertEqual(mount_point, '/tmp/mount_image_abc')
+
+    @patch('mount_image._mount_darwin.subprocess.run')
+    @patch('mount_image._mount_darwin.tempfile.mkdtemp')
+    def test_mount_image_all_mounts_fail(self, mock_mkdtemp, mock_run):
+        mock_mkdtemp.return_value = '/tmp/mount_image_abc'
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=_make_plist([
+                {'dev-entry': '/dev/disk5'},
+            ]), stderr=''),
+            MagicMock(returncode=0),
+            MagicMock(returncode=0, stdout=_make_plist([
+                {'dev-entry': '/dev/disk5'},
+                {'dev-entry': '/dev/disk5s1'},
+            ]), stderr=''),
+            MagicMock(returncode=1),
+            MagicMock(returncode=1),
+            MagicMock(returncode=0),
+        ]
+        from mount_image._mount_darwin import mount_image
+        with self.assertRaises(RuntimeError) as ctx:
+            mount_image('/tmp/test.img')
+        self.assertIn('mount failed', str(ctx.exception))
+
+    @patch('mount_image._mount_darwin.subprocess.run')
+    @patch('mount_image._mount_darwin.tempfile.mkdtemp')
+    def test_mount_image_nomount_attach_fails(self, mock_mkdtemp, mock_run):
+        mock_mkdtemp.return_value = '/tmp/mount_image_abc'
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout=_make_plist([
+                {'dev-entry': '/dev/disk5'},
+            ]), stderr=''),
+            MagicMock(returncode=0),
+            MagicMock(returncode=1, stdout='', stderr='nomount failed'),
+        ]
+        from mount_image._mount_darwin import mount_image
+        with self.assertRaises(RuntimeError) as ctx:
+            mount_image('/tmp/test.img')
+        self.assertIn('nomount', str(ctx.exception))
+
+    # ── umount_image ─────────────────────────────────────────────────
+
+    @patch('mount_image._mount_darwin.subprocess.run')
+    def test_umount_image_with_mount_point(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        from mount_image._mount_darwin import umount_image
+        umount_image('/dev/disk5', '/tmp/mount_point')
+
+    @patch('mount_image._mount_darwin.subprocess.run')
+    def test_umount_image_no_mount_point(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        from mount_image._mount_darwin import umount_image
+        umount_image('/dev/disk5')
+
+    # ── attach_image ─────────────────────────────────────────────────
+
+    @patch('mount_image._mount_darwin.subprocess.run')
+    def test_attach_image_whole_disk(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout=_make_plist([
+            {'dev-entry': '/dev/disk5'},
+            {'dev-entry': '/dev/disk5s1'},
+        ]), stderr='')
         from mount_image._mount_darwin import attach_image
         device = attach_image('/tmp/test.img')
         self.assertEqual(device, '/dev/disk5')
 
     @patch('mount_image._mount_darwin.subprocess.run')
-    def test_attach_raw_image_no_entities(self, mock_run):
-        plist = '''<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>system-entities</key>
-    <array/>
-</dict>
-</plist>'''
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=plist,
-            stderr='',
-        )
+    def test_attach_image_only_slices_fallback(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout=_make_plist([
+            {'dev-entry': '/dev/disk5s1'},
+        ]), stderr='')
+        from mount_image._mount_darwin import attach_image
+        device = attach_image('/tmp/test.img')
+        self.assertEqual(device, '/dev/disk5s1')
+
+    @patch('mount_image._mount_darwin.subprocess.run')
+    def test_attach_image_no_entities(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout=_make_plist([]),
+                                           stderr='')
         from mount_image._mount_darwin import attach_image
         with self.assertRaises(RuntimeError) as ctx:
             attach_image('/tmp/test.img')
@@ -179,20 +246,13 @@ class TestDarwinMount(unittest.TestCase):
     @patch('mount_image._mount_darwin.subprocess.run')
     def test_attach_image_attach_fails(self, mock_run):
         mock_run.return_value = MagicMock(
-            returncode=1,
-            stdout='',
-            stderr='hdiutil: attach failed',
-        )
+            returncode=1, stdout='', stderr='hdiutil: attach failed')
         from mount_image._mount_darwin import attach_image
         with self.assertRaises(RuntimeError) as ctx:
             attach_image('/tmp/test.img')
         self.assertIn('hdiutil attach', str(ctx.exception))
 
-    @patch('mount_image._mount_darwin.subprocess.run')
-    def test_umount_image(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0)
-        from mount_image._mount_darwin import umount_image
-        umount_image('/dev/disk5', '/tmp/mount_point')
+    # ── detach_image ─────────────────────────────────────────────────
 
     @patch('mount_image._mount_darwin.subprocess.run')
     def test_detach_image(self, mock_run):
