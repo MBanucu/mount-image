@@ -6,3 +6,7 @@ build/
 .coverage
 htmlcov/
 coverage.xml
+mount-image-sudo/
+mount-image-udisks/
+mount-image-guestmount/
+mount-image-hdiutil/

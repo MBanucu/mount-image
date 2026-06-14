@@ -74,6 +74,15 @@ def _prepare_image() -> str:
     return path
 
 
+def _device_backing_file():
+    """Return device_backing_file or raise SkipTest."""
+    try:
+        from mount_resolve import device_backing_file
+        return device_backing_file
+    except ImportError:
+        raise unittest.SkipTest('mount-resolve not available')
+
+
 class TestMountImageIntegration(unittest.TestCase):
     """Integration tests using a real FAT filesystem image."""
 
@@ -107,7 +116,7 @@ class TestMountImageIntegration(unittest.TestCase):
 
     def test_attach_and_detach_raw(self):
         from mount_image import attach_image, detach_image
-        from mount_resolve import device_backing_file
+        device_backing_file = _device_backing_file()
 
         device = attach_image(self._img)
         try:
@@ -183,7 +192,7 @@ class TestStrategyIntegration(unittest.TestCase):
         if not _sudo_available():
             raise unittest.SkipTest('sudo not available')
         from mount_image._mount_linux import _sudo_attach, _sudo_detach
-        from mount_resolve import device_backing_file
+        device_backing_file = _device_backing_file()
 
         dev = _sudo_attach(self._img)
         self._dev = dev
@@ -228,7 +237,7 @@ class TestStrategyIntegration(unittest.TestCase):
         if not self._udisks_available():
             raise unittest.SkipTest('udisksctl not available')
         from mount_image._mount_linux import _udisks_attach, _udisks_detach
-        from mount_resolve import device_backing_file
+        device_backing_file = _device_backing_file()
 
         try:
             dev = _udisks_attach(self._img)
