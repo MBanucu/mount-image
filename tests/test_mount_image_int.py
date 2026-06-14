@@ -9,6 +9,7 @@ import os
 import platform
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -133,6 +134,139 @@ class TestMountImageIntegration(unittest.TestCase):
                 umount_image(dev2, mp2)
         finally:
             umount_image(dev1, mp1)
+
+
+class TestStrategyIntegration(unittest.TestCase):
+    """Integration test for each mounting strategy individually."""
+
+    _img: str
+
+    @classmethod
+    def setUpClass(cls):
+        if _SYSTEM == 'Darwin':
+            raise unittest.SkipTest('Linux-only strategies')
+        cls._img = _prepare_image()
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            os.unlink(cls._img)
+        except OSError:
+            pass
+
+    def setUp(self):
+        self._dev = None
+        self._mp = None
+
+    def tearDown(self):
+        pass
+
+    # ── sudo strategy ──────────────────────────────────────────────
+
+    def test_sudo_mount_and_umount(self):
+        if not _sudo_available():
+            raise unittest.SkipTest('sudo not available')
+        from mount_image._mount_linux import (
+            _sudo_mount, _sudo_umount_inner, _sudo_detach)
+
+        dev, mp = _sudo_mount(self._img, 'vfat', None)
+        self._dev = dev
+        self._mp = mp
+        self.assertTrue(os.path.ismount(mp))
+        self.assertIn('loop', dev)
+
+        _sudo_umount_inner(dev)
+        _sudo_detach(dev)
+        self.assertFalse(os.path.ismount(mp))
+
+    def test_sudo_attach_and_detach(self):
+        if not _sudo_available():
+            raise unittest.SkipTest('sudo not available')
+        from mount_image._mount_linux import _sudo_attach, _sudo_detach
+        from mount_resolve import device_backing_file
+
+        dev = _sudo_attach(self._img)
+        self._dev = dev
+        self.assertIn('loop', dev)
+        self.assertEqual(device_backing_file(dev), self._img)
+
+        _sudo_detach(dev)
+        self.assertIsNone(device_backing_file(dev))
+
+    # ── udisksctl strategy ─────────────────────────────────────────
+
+    @staticmethod
+    def _udisks_available() -> bool:
+        r = subprocess.run(['which', 'udisksctl'],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return r.returncode == 0
+
+    def test_udisks_mount_and_umount(self):
+        if not self._udisks_available():
+            raise unittest.SkipTest('udisksctl not available')
+        from mount_image._mount_linux import (
+            _udisks_mount, _udisks_umount_inner, _udisks_detach)
+
+        try:
+            dev, mp = _udisks_mount(self._img, 'vfat', None)
+        except RuntimeError as e:
+            msg = str(e)
+            if 'error' in msg.lower() or 'authority' in msg.lower():
+                raise unittest.SkipTest(f'udisksctl not functional: {msg}')
+            raise
+        self._dev = dev
+        self._mp = mp
+        self.assertTrue(os.path.ismount(mp))
+        self.assertIn('loop', dev)
+
+        _udisks_umount_inner(dev)
+        _udisks_detach(dev)
+        time.sleep(0.5)
+        self.assertFalse(os.path.ismount(mp))
+
+    def test_udisks_attach_and_detach(self):
+        if not self._udisks_available():
+            raise unittest.SkipTest('udisksctl not available')
+        from mount_image._mount_linux import _udisks_attach, _udisks_detach
+        from mount_resolve import device_backing_file
+
+        try:
+            dev = _udisks_attach(self._img)
+        except RuntimeError as e:
+            msg = str(e)
+            if 'error' in msg.lower() or 'authority' in msg.lower():
+                raise unittest.SkipTest(f'udisksctl not functional: {msg}')
+            raise
+        self._dev = dev
+        self.assertIn('loop', dev)
+        self.assertEqual(device_backing_file(dev), self._img)
+
+        _udisks_detach(dev)
+        time.sleep(0.5)
+        self.assertIsNone(device_backing_file(dev))
+
+    # ── guestmount strategy ────────────────────────────────────────
+
+    @staticmethod
+    def _guestmount_available() -> bool:
+        r = subprocess.run(['which', 'guestmount'],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return r.returncode == 0
+
+    def test_guestmount_fstype_auto(self):
+        if not self._guestmount_available():
+            raise unittest.SkipTest('guestmount not available')
+        from mount_image._mount_linux import (
+            _guestmount_mount, _guestmount_umount_inner)
+
+        dev, mp = _guestmount_mount(self._img, 'vfat', None)
+        self._mp = mp
+        self.assertTrue(os.path.ismount(mp))
+        entries = os.listdir(mp)
+        self.assertIsInstance(entries, list)
+
+        _guestmount_umount_inner(mp)
+        self.assertFalse(os.path.ismount(mp))
 
 
 if __name__ == '__main__':
