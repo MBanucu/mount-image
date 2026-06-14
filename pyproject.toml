@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mount-image"
-version = "0.2.1"
+version = "0.3.0"
 description = "Cross-platform disk image mounting via loop devices (Linux) or hdiutil (macOS)"
 readme = "README.md"
 license = "GPL-3.0-only"
