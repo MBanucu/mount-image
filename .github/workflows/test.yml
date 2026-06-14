@@ -38,13 +38,6 @@ jobs:
           EOF
           sudo systemctl restart polkit || true
 
-      - name: Install strategy packages (from GitHub)
-        run: |
-          pip install git+https://github.com/MBanucu/mount-image-sudo.git
-          pip install git+https://github.com/MBanucu/mount-image-udisks.git
-          pip install git+https://github.com/MBanucu/mount-image-guestmount.git
-          pip install git+https://github.com/MBanucu/mount-image-hdiutil.git
-
       - name: Install project and dependencies
         run: python -m pip install -e .
 
