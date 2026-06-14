@@ -14,6 +14,12 @@ class TestImports(unittest.TestCase):
 
 
 class TestLinuxMount(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import platform
+        if platform.system() != 'Linux':
+            raise unittest.SkipTest('Linux-only tests')
+
     @patch('mount_image._mount_linux._sudo_mount')
     def test_mount_image_success(self, mock_sudo_mount):
         mock_sudo_mount.return_value = ('/dev/loop0', '/tmp/mount_image_abc')
