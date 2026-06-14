@@ -168,7 +168,18 @@ class TestStrategyIntegration(unittest.TestCase):
         self._mp = None
 
     def tearDown(self):
-        pass
+        if self._dev and self._mp:
+            try:
+                from mount_image._mount_linux import umount_image
+                umount_image(self._dev, self._mp)
+            except Exception:
+                pass
+        elif self._dev:
+            try:
+                from mount_image._mount_linux import detach_image
+                detach_image(self._dev)
+            except Exception:
+                pass
 
     # ── sudo strategy ──────────────────────────────────────────────
 

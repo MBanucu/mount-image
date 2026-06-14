@@ -12,23 +12,30 @@
 [![Downloads/month](https://pepy.tech/badge/mount-image/month)](https://pepy.tech/project/mount-image)
 [![Downloads/week](https://pepy.tech/badge/mount-image/week)](https://pepy.tech/project/mount-image)
 
-Cross-platform disk image mounting via loop devices (Linux) or hdiutil (macOS).
+Cross-platform disk image mounting — strategy selector that chains multiple
+backends, preferring methods that **do not require sudo**.
 
-## Features
+## Strategy chain
 
-- **`mount_image`** — attach a disk image as a loop device and mount it:
-  Linux uses `losetup` + `mount`, macOS uses `hdiutil attach` + `mount`
-- **`umount_image`** — unmount and detach a disk image
-- **`attach_image`** — attach a disk image as a block device without mounting
-  (for raw block I/O)
-- **`detach_image`** — detach a raw block device
+`mount_image()` tries each strategy in order and uses the first one that
+succeeds.  The default chain (Linux) is ordered from no-sudo to sudo:
+
+| # | Strategy | Package | Sudo? | Description |
+|---|----------|---------|-------|-------------|
+| 1 | **udisksctl** | `mount-image-udisks` | **No** | Loop devices via UDisks2 (polkit). Works on most desktop distros. |
+| 2 | **guestmount** | `mount-image-guestmount` | No | FUSE mount via libguestfs. |
+| 3 | **sshfs** | `mount-image-sshfs` | No | FUSE mount of remote paths via SSH. |
+| 4 | **rclone** | `mount-image-rclone` | No | FUSE mount of cloud/remote storage. |
+| 5 | **sudo** | `mount-image-sudo` | Yes | `losetup` + `mount`. Last resort. |
+
+On macOS, `hdiutil` (`mount-image-hdiutil`) is used.
 
 ## Quick start
 
 ```python
 from mount_image import mount_image, umount_image
 
-# Mount a disk image
+# Mount a disk image (tries udisksctl first — no sudo on most systems)
 device, mount_point = mount_image('/path/to/disk.img')
 print(f'Mounted {device} at {mount_point}')
 
@@ -44,12 +51,34 @@ umount_image(device, mount_point)
 from mount_image import attach_image, detach_image
 
 dev = attach_image('/path/to/disk.img')
-# Read/write raw blocks via /dev/loop0 or /dev/disk5
+# Read/write raw blocks via /dev/loopN
 detach_image(dev)
 ```
 
-> **Note:** All functions require `sudo` for losetup/mount (Linux) or
-> hdiutil/mount (macOS).
+### Custom filesystem type and mount options
+
+```python
+device, mount_point = mount_image(
+    '/path/to/disk.img',
+    fstype='ext4',
+    options=['ro', 'noexec'],
+)
+```
+
+## Installation
+
+Each strategy is a separate pip package. Install what you need:
+
+```bash
+pip install mount-image                  # orchestrator + all strategies
+pip install mount-image-udisks           # only udisksctl strategy (no-sudo)
+```
+
+Or pick individual strategies:
+
+```bash
+pip install mount-image mount-image-udisks mount-image-guestmount
+```
 
 ## License
 
