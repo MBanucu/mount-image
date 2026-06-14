@@ -113,6 +113,12 @@ def _make_plist(entities):
 class TestDarwinMount(unittest.TestCase):
     """Test hdiutil strategy (imported from mount_image_hdiutil)."""
 
+    @classmethod
+    def setUpClass(cls):
+        import platform
+        if platform.system() != 'Darwin':
+            raise unittest.SkipTest('macOS-only: mount-image-hdiutil not installed')
+
     @patch('mount_image_hdiutil.subprocess.run')
     def test_mount_image_auto_mount_succeeds(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout=_make_plist([
@@ -234,6 +240,8 @@ class TestPlatformDispatch(unittest.TestCase):
 
     def test_darwin_import(self):
         import platform
+        if platform.system() != 'Darwin':
+            raise unittest.SkipTest('mount-image-hdiutil not installed on non-Darwin')
         with patch.object(platform, 'system', return_value='Darwin'):
             import importlib
             import mount_image._mount
