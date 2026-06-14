@@ -1,13 +1,21 @@
 """Integration tests — actually mount and unmount a real disk image.
 
-Requires sudo and mkfs.fat. Skips if unavailable.
+Requires sudo. Uses mkfs.fat on-the-fly when available; falls back to
+a pre-built sparse FAT image (tests/fat.img.gz) otherwise.
 """
 
+import gzip
 import os
+import platform
+import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+
+_FAT_IMG_SIZE_MB = 1
+_SYSTEM = platform.system()
 
 
 def _sudo_available() -> bool:
@@ -15,14 +23,76 @@ def _sudo_available() -> bool:
     return r.returncode == 0
 
 
+def _device_attached(device: str, img_path: str) -> bool:
+    """Check if *device* is still attached and pointing to *img_path*."""
+    if _SYSTEM == 'Darwin':
+        r = subprocess.run(
+            ['hdiutil', 'info', '-plist'], capture_output=True, text=True)
+        import plistlib
+        try:
+            info = plistlib.loads(r.stdout.encode())
+        except Exception:
+            return False
+        for img in info.get('images', []):
+            for ent in img.get('system-entities', []):
+                if ent.get('dev-entry') == device:
+                    return True
+        return False
+    else:
+        r = subprocess.run(['sudo', 'losetup', device],
+                           capture_output=True, text=True)
+        return r.returncode == 0 and img_path in r.stdout
+
+
 def _mkfs_available() -> bool:
-    r = subprocess.run(['which', 'mkfs.fat'], capture_output=True)
+    r = subprocess.run(['which', 'mkfs.fat'],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return r.returncode == 0
 
 
-def _create_fat_image(path: str, size_mb: int = 1):
-    subprocess.run(['truncate', '-s', f'{size_mb}M', path], check=True)
+def _create_fat_image(path: str):
+    subprocess.run(['truncate', '-s', f'{_FAT_IMG_SIZE_MB}M', path], check=True)
     subprocess.run(['mkfs.fat', path], check=True, capture_output=True)
+
+
+def _decompress_image(gz_path: Path, dest_path: str):
+    CHUNK = 1024 * 1024
+    zero = b'\x00' * CHUNK
+    full_size = _FAT_IMG_SIZE_MB * 1024 * 1024
+
+    fd = os.open(dest_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC)
+    os.ftruncate(fd, full_size)
+    os.close(fd)
+
+    offset = 0
+    with gzip.open(gz_path, 'rb') as src, open(dest_path, 'rb+') as dst:
+        while True:
+            chunk = src.read(CHUNK)
+            if not chunk:
+                break
+            if chunk != zero[:len(chunk)]:
+                os.lseek(dst.fileno(), offset, os.SEEK_SET)
+                dst.write(chunk)
+            offset += len(chunk)
+
+
+def _prepare_image() -> str:
+    """Return path to a writable FAT image, creating it if needed."""
+    if _mkfs_available():
+        fd, path = tempfile.mkstemp(suffix='.img', prefix='mount_image_test_')
+        os.close(fd)
+        _create_fat_image(path)
+        return path
+
+    gz_path = Path(__file__).parent / 'fat.img.gz'
+    if not gz_path.exists():
+        raise unittest.SkipTest(
+            'mkfs.fat not available and fat.img.gz fixture not found')
+
+    fd, path = tempfile.mkstemp(suffix='.img', prefix='mount_image_test_')
+    os.close(fd)
+    _decompress_image(gz_path, path)
+    return path
 
 
 class TestMountImageIntegration(unittest.TestCase):
@@ -34,12 +104,7 @@ class TestMountImageIntegration(unittest.TestCase):
     def setUpClass(cls):
         if not _sudo_available():
             raise unittest.SkipTest('sudo passwordless access required')
-        if not _mkfs_available():
-            raise unittest.SkipTest('mkfs.fat not available')
-
-        fd, cls._img = tempfile.mkstemp(suffix='.img', prefix='mount_image_test_')
-        os.close(fd)
-        _create_fat_image(cls._img)
+        cls._img = _prepare_image()
 
     @classmethod
     def tearDownClass(cls):
@@ -68,19 +133,18 @@ class TestMountImageIntegration(unittest.TestCase):
         try:
             self.assertTrue(os.path.exists(device))
             self.assertTrue(device.startswith('/dev/'))
-            r = subprocess.run(['sudo', 'losetup', device],
-                               capture_output=True, text=True)
-            self.assertEqual(r.returncode, 0)
-            self.assertIn(self._img, r.stdout)
+            self.assertTrue(_device_attached(device, self._img),
+                            f'{device} should be attached')
         finally:
             detach_image(device)
 
-        r = subprocess.run(['sudo', 'losetup', device],
-                           capture_output=True, text=True)
-        self.assertNotEqual(r.returncode, 0,
-                            f'loop device {device} should be detached')
+        self.assertFalse(_device_attached(device, self._img),
+                         f'{device} should be detached')
 
     def test_mount_image_twice_different_mount_points(self):
+        if _SYSTEM == 'Darwin':
+            raise unittest.SkipTest(
+                'macOS cannot mount the same image twice')
         from mount_image import mount_image, umount_image
 
         dev1, mp1 = mount_image(self._img, fstype='vfat')
