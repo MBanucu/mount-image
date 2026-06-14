@@ -1,13 +1,19 @@
 """Integration tests — actually mount and unmount a real disk image.
 
-Requires sudo and mkfs.fat. Skips if unavailable.
+Requires sudo. Uses mkfs.fat on-the-fly when available; falls back to
+a pre-built sparse FAT image (tests/fat.img.gz) otherwise.
 """
 
+import gzip
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+
+
+_FAT_IMG_SIZE_MB = 1
 
 
 def _sudo_available() -> bool:
@@ -16,13 +22,54 @@ def _sudo_available() -> bool:
 
 
 def _mkfs_available() -> bool:
-    r = subprocess.run(['which', 'mkfs.fat'], capture_output=True)
+    r = subprocess.run(['which', 'mkfs.fat'],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return r.returncode == 0
 
 
-def _create_fat_image(path: str, size_mb: int = 1):
-    subprocess.run(['truncate', '-s', f'{size_mb}M', path], check=True)
+def _create_fat_image(path: str):
+    subprocess.run(['truncate', '-s', f'{_FAT_IMG_SIZE_MB}M', path], check=True)
     subprocess.run(['mkfs.fat', path], check=True, capture_output=True)
+
+
+def _decompress_image(gz_path: Path, dest_path: str):
+    CHUNK = 1024 * 1024
+    zero = b'\x00' * CHUNK
+    full_size = _FAT_IMG_SIZE_MB * 1024 * 1024
+
+    fd = os.open(dest_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC)
+    os.ftruncate(fd, full_size)
+    os.close(fd)
+
+    offset = 0
+    with gzip.open(gz_path, 'rb') as src, open(dest_path, 'rb+') as dst:
+        while True:
+            chunk = src.read(CHUNK)
+            if not chunk:
+                break
+            if chunk != zero[:len(chunk)]:
+                os.lseek(dst.fileno(), offset, os.SEEK_SET)
+                dst.write(chunk)
+            offset += len(chunk)
+
+
+def _prepare_image() -> str:
+    """Return path to a writable FAT image, creating it if needed."""
+    if _mkfs_available():
+        fd, path = tempfile.mkstemp(suffix='.img', prefix='mount_image_test_')
+        os.close(fd)
+        _create_fat_image(path)
+        return path
+
+    gz_path = Path(__file__).parent / 'fat.img.gz'
+    if not gz_path.exists():
+        raise unittest.SkipTest(
+            'mkfs.fat not available and fat.img.gz fixture not found')
+
+    fd, path = tempfile.mkstemp(suffix='.img', prefix='mount_image_test_')
+    os.close(fd)
+    _decompress_image(gz_path, path)
+    return path
 
 
 class TestMountImageIntegration(unittest.TestCase):
@@ -34,12 +81,7 @@ class TestMountImageIntegration(unittest.TestCase):
     def setUpClass(cls):
         if not _sudo_available():
             raise unittest.SkipTest('sudo passwordless access required')
-        if not _mkfs_available():
-            raise unittest.SkipTest('mkfs.fat not available')
-
-        fd, cls._img = tempfile.mkstemp(suffix='.img', prefix='mount_image_test_')
-        os.close(fd)
-        _create_fat_image(cls._img)
+        cls._img = _prepare_image()
 
     @classmethod
     def tearDownClass(cls):
