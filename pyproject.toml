@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mount-image"
 version = "0.5.0"
-description = "Cross-platform disk image mounting — strategy selector (sudo losetup, udisksctl, guestmount, hdiutil)"
+description = "Cross-platform disk image mounting — strategy selector (udisksctl, guestmount, sshfs, rclone, sudo losetup, hdiutil)"
 readme = "README.md"
 license = "GPL-3.0-only"
 requires-python = ">=3.10"

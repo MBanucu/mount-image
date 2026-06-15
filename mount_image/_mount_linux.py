@@ -1,4 +1,9 @@
-"""Linux disk image mounting — strategy chain (sudo → udisksctl → guestmount → sshfs → rclone)."""
+"""Linux disk image mounting — strategy chain (udisksctl → guestmount → sshfs → rclone → sudo).
+
+Strategies are tried in order: no-sudo methods first, falling back to sudo
+as a last resort.  Popular desktop distributions grant active local sessions
+permission to create loop devices via udisksctl without a password.
+"""
 
 import os
 import shutil
@@ -35,23 +40,27 @@ from mount_image_rclone import (
     detach_inner as _rclone_detach,
 )
 
-_STRATEGY_NAMES = ['sudo', 'udisksctl', 'guestmount', 'sshfs', 'rclone']
+# Strategy order: no-sudo methods first, sudo last
+_STRATEGY_NAMES = ['udisksctl', 'guestmount', 'sshfs', 'rclone', 'sudo']
 _FUSE_STRATEGIES = {'guestmount', 'sshfs', 'rclone'}
+_NO_RMTREE_STRATEGIES = {'udisksctl'}
 _teardown: dict[str, tuple[Callable, Callable, str | None]] = {}
+# Track which mount points were created by us (temp dirs) and need cleanup
+_managed_mount_points: set[str] = set()
 
 
 def _get_strategy_fns():
     return [
-        (_STRATEGY_NAMES[0], _sudo_mount, _sudo_attach,
-         _sudo_umount_inner, _sudo_detach),
-        (_STRATEGY_NAMES[1], _udisks_mount, _udisks_attach,
+        (_STRATEGY_NAMES[0], _udisks_mount, _udisks_attach,
          _udisks_umount_inner, _udisks_detach),
-        (_STRATEGY_NAMES[2], _guestmount_mount, _guestmount_attach,
+        (_STRATEGY_NAMES[1], _guestmount_mount, _guestmount_attach,
          _guestmount_umount_inner, _guestmount_detach),
-        (_STRATEGY_NAMES[3], _sshfs_mount, None,
+        (_STRATEGY_NAMES[2], _sshfs_mount, None,
          _sshfs_umount_inner, _sshfs_detach),
-        (_STRATEGY_NAMES[4], _rclone_mount, None,
+        (_STRATEGY_NAMES[3], _rclone_mount, None,
          _rclone_umount_inner, _rclone_detach),
+        (_STRATEGY_NAMES[4], _sudo_mount, _sudo_attach,
+         _sudo_umount_inner, _sudo_detach),
     ]
 
 
@@ -59,7 +68,7 @@ def mount_image(image_path: str, fstype: str = 'exfat',
                 options: list[str] | None = None) -> tuple[str, str]:
     """Attach *image_path* as a loop device and mount it.
 
-    Tries strategies in order: sudo losetup → udisksctl → guestmount.
+    Tries strategies in order: udisksctl → guestmount → sshfs → rclone → sudo.
     Returns ``(device, mount_point)``.
     Raises ``RuntimeError`` if all strategies fail.
     """
@@ -68,6 +77,8 @@ def mount_image(image_path: str, fstype: str = 'exfat',
         try:
             device, mp = mount_fn(image_path, fstype, options)
             _teardown[device] = (umount_fn, detach_fn, mp)
+            if label not in _NO_RMTREE_STRATEGIES:
+                _managed_mount_points.add(mp)
             return device, mp
         except (RuntimeError, FileNotFoundError) as e:
             errors.append(f'{label}: {e}')
@@ -81,12 +92,17 @@ def umount_image(device: str, mount_point: str | None = None):
     umount_fn, detach_fn, stored_mp = _teardown.pop(device, (None, None, None))
     mp = mount_point or stored_mp
 
-    if umount_fn:
+    if umount_fn is not None:
         try:
             umount_fn(device)
         except Exception:
             pass
     elif mp:
+        try:
+            subprocess.run(['udisksctl', 'unmount', '-b', device,
+                           '--no-user-interaction'], capture_output=True)
+        except Exception:
+            pass
         try:
             subprocess.run(['sudo', 'umount', mp], capture_output=True)
         except Exception:
@@ -97,22 +113,23 @@ def umount_image(device: str, mount_point: str | None = None):
         except Exception:
             pass
 
-    if mp:
+    if mp and mp in _managed_mount_points:
+        _managed_mount_points.discard(mp)
         time.sleep(0.3)
         try:
             shutil.rmtree(mp, ignore_errors=True)
         except Exception:
             pass
 
-    if detach_fn:
+    if detach_fn is not None:
         try:
             detach_fn(device)
         except Exception:
             pass
     elif device:
         for cmd in (
-            ['sudo', 'losetup', '-d', device],
             ['udisksctl', 'loop-delete', '-b', device, '--no-user-interaction'],
+            ['sudo', 'losetup', '-d', device],
         ):
             subprocess.run(cmd, stderr=subprocess.DEVNULL)
 
@@ -120,7 +137,7 @@ def umount_image(device: str, mount_point: str | None = None):
 def attach_image(image_path: str) -> str:
     """Attach *image_path* as a block device without mounting.
 
-    Tries strategies in order: sudo losetup → udisksctl.
+    Tries strategies in order: udisksctl → sudo.
     Returns the device path (e.g. ``/dev/loop0``).
     Raises ``RuntimeError`` if all strategies fail.
     """
@@ -130,7 +147,7 @@ def attach_image(image_path: str) -> str:
             continue
         try:
             device = attach_fn(image_path)
-            _teardown[device] = (detach_fn, detach_fn, None)
+            _teardown[device] = (None, detach_fn, None)
             return device
         except (RuntimeError, FileNotFoundError) as e:
             errors.append(f'{label}: {e}')
@@ -142,15 +159,15 @@ def attach_image(image_path: str) -> str:
 def detach_image(device: str):
     """Detach a block device using the matching strategy."""
     _dummy, detach_fn, _mp = _teardown.pop(device, (None, None, None))
-    if detach_fn:
+    if detach_fn is not None:
         try:
             detach_fn(device)
         except Exception:
             pass
     else:
         for cmd in (
-            ['sudo', 'losetup', '-d', device],
             ['udisksctl', 'loop-delete', '-b', device, '--no-user-interaction'],
+            ['sudo', 'losetup', '-d', device],
         ):
             try:
                 subprocess.run(cmd, stdout=subprocess.DEVNULL,
